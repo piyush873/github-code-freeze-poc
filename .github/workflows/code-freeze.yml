@@ -19,6 +19,7 @@ jobs:
 
     steps:
       - name: Check Code Freeze
+        id: freeze-check
         run: |
           echo "Release Date: $RELEASE_DATE"
           echo "Freeze Period: $FREEZE_DAYS days"
@@ -27,16 +28,18 @@ jobs:
           TODAY_TS=$(date -u +%s)
 
           FREEZE_TS=$((RELEASE_TS - FREEZE_DAYS * 86400))
-
           FREEZE_DATE=$(date -u -d "@$FREEZE_TS" "+%Y-%m-%d")
+          TODAY=$(date -u "+%Y-%m-%d")
 
-          echo "Today's Date: $(date -u "+%Y-%m-%d")"
+          echo "Today's Date: $TODAY"
           echo "Calculated Freeze Date: $FREEZE_DATE"
 
-          if [ "$(date -u "+%Y-%m-%d")" = "$FREEZE_DATE" ]; then
+          if [ "$TODAY" = "$FREEZE_DATE" ]; then
             echo "🚨 CODE FREEZE SHOULD START TODAY"
+            echo "freeze=true" >> "$GITHUB_OUTPUT"
           else
             echo "✅ Code Freeze is not required today"
+            echo "freeze=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check GitHub Branch Protection
@@ -45,23 +48,36 @@ jobs:
           echo "Checking branch protection for main..."
 
           RESPONSE=$(curl -s \
-            -o /tmp/protection.json \
+            -o /tmp/ruleset.json \
             -w "%{http_code}" \
             -L \
+            -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.CODE_FREEZE_PAT }}" \
             -H "X-GitHub-Api-Version: 2026-03-10" \
-            "https://api.github.com/repos/${{ github.repository }}/branches/main/protection")
+            "https://api.github.com/repos/${{ github.repository }}/rulesets") \
+            -d '{
+              "name": "Code Freeze Protection",
+              "type": "branch",
+              "enforcement": "active",
+              "conditions": {
+                "ref_name": {
+                  "includes": ["refs/heads/ main"]},
+                  "excludes": []
+              },
+              "rules": [
+                {
+                "type": "update"
+                }
+              ]
+            }')
 
           echo "HTTP Status: $RESPONSE"
+          cat /tmp/ruleset.json
 
-          if [ "$RESPONSE" = "200" ]; then
-            echo "Branch protection is enabled."
-            cat /tmp/protection.json
-          elif [ "$RESPONSE" = "404" ]; then
-            echo "Branch protection is not enabled for main."
+          if [ "$RESPONSE" = "201" ]; then
+            echo "✅ Code Freeze Ruleset created successfully."
           else
-            echo "GitHub API request failed."
-            cat /tmp/protection.json
+            echo "❌ Failed to create Code Freeze Ruleset."
             exit 1
           fi
