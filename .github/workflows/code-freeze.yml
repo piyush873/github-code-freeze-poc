@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      RELEASE_DATE: "2026-08-31"
+      RELEASE_DATE: "2026-09-30"
       FREEZE_DAYS: 21
 
     steps:
