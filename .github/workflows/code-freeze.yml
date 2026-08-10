@@ -6,6 +6,10 @@ on:
   schedule:
     - cron: "0 6 * * *"
 
+permissions:
+  contents: read
+  administration: read
+
 jobs:
   code-freeze-check:
     runs-on: ubuntu-latest
@@ -34,4 +38,31 @@ jobs:
             echo "🚨 CODE FREEZE SHOULD START TODAY"
           else
             echo "✅ Code Freeze is not required today"
+          fi
+
+      - name: Check GitHub Branch Protection
+        if: success()
+        run: |
+          echo "Checking branch protection for main..."
+
+          RESPONSE=$(curl -s \
+            -o /tmp/protection.json \
+            -w "%{http_code}" \
+            -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/repos/${{ github.repository }}/branches/main/protection")
+
+          echo "HTTP Status: $RESPONSE"
+
+          if [ "$RESPONSE" = "200" ]; then
+            echo "Branch protection is enabled."
+            cat /tmp/protection.json
+          elif [ "$RESPONSE" = "404" ]; then
+            echo "Branch protection is not enabled for main."
+          else
+            echo "GitHub API request failed."
+            cat /tmp/protection.json
+            exit 1
           fi
