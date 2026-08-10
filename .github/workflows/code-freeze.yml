@@ -84,3 +84,29 @@ jobs:
             echo "❌ Failed to create Code Freeze Ruleset."
             exit 1
           fi
+
+
+      - name: Disable Code Freeze
+        if: false
+        run: |
+          echo "🔓 Disabling Code Freeze..."
+
+          RESPONSE=$(curl -s \
+            -o /tmp/delete-ruleset.json \
+            -w "%{http_code}" \
+            -L \
+            -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.CODE_FREEZE_PAT }}" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/repos/${{ github.repository }}/rulesets/20630226")
+
+          echo "HTTP Status: $RESPONSE"
+
+          if [ "$RESPONSE" = "204" ]; then
+            echo "✅ Code Freeze Ruleset deleted successfully."
+          else
+            echo "❌ Failed to delete Code Freeze Ruleset."
+            cat /tmp/delete-ruleset.json
+            exit 1
+          fi
