@@ -2,6 +2,12 @@ name: Code Freeze POC
 
 on:
   workflow_dispatch:
+    inputs:
+      release_completed:
+        description: "Simulate release completion for testing"
+        required: true
+        type: boolean
+        default: false
 
   schedule:
     - cron: "0 6 * * *"
@@ -51,9 +57,14 @@ jobs:
           echo "Today's Date: $TODAY"
           echo "Release Date: $RELEASE_DATE"
 
-          if [[ "$TODAY" > "$RELEASE_DATE" || "$TODAY" == "$RELEASE_DATE" ]]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.release_completed }}" = "true" ]; then
+            echo "🧪 Manual test: Release completion simulated."
+            echo "release_completed=true" >> "$GITHUB_OUTPUT"
+
+          elif [[ "$TODAY" > "$RELEASE_DATE" || "$TODAY" == "$RELEASE_DATE" ]]; then
             echo "🚀 Release date has been reached."
             echo "release_completed=true" >> "$GITHUB_OUTPUT"
+
           else
             echo "⏳ Release is not completed yet."
             echo "release_completed=false" >> "$GITHUB_OUTPUT"
