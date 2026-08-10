@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      RELEASE_DATE: "2026-09-30"
+      RELEASE_DATE: "2026-08-31"
       FREEZE_DAYS: 21
 
     steps:
@@ -43,8 +43,45 @@ jobs:
             echo "Freeze output: false"
           fi
 
-      - name: Enable Code Freeze
+      - name: Check Existing Code Freeze
+        id: existing-freeze
         if: steps.freeze-check.outputs.freeze == 'true'
+        run: |
+          echo "Checking for existing Code Freeze Protection ruleset..."
+
+          RESPONSE=$(curl -s \
+            -o /tmp/rulesets.json \
+            -w "%{http_code}" \
+            -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.CODE_FREEZE_PAT }}" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/repos/${{ github.repository }}/rulesets")
+
+          echo "HTTP Status: $RESPONSE"
+
+          if [ "$RESPONSE" != "200" ]; then
+            echo "❌ Failed to retrieve repository rulesets."
+            cat /tmp/rulesets.json
+            exit 1
+          fi
+
+          RULESET_ID=$(jq -r '.[] | select(.name == "Code Freeze Protection") | .id' /tmp/rulesets.json | head -n 1)
+
+          if [ -n "$RULESET_ID" ]; then
+            echo "🔒 Code Freeze Protection already exists."
+            echo "Ruleset ID: $RULESET_ID"
+
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "ruleset_id=$RULESET_ID" >> "$GITHUB_OUTPUT"
+          else
+            echo "No existing Code Freeze Protection ruleset found."
+
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Enable Code Freeze
+        if: steps.freeze-check.outputs.freeze == 'true' && steps.existing-freeze.outputs.exists == 'false'
         run: |
           echo "🚨 Enabling Code Freeze..."
 
