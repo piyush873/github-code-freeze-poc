@@ -42,10 +42,10 @@ jobs:
             echo "freeze=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check GitHub Branch Protection
-        if: success()
+      - name: Enable Code Freeze
+        if: steps.freeze-check.outputs.freeze == 'true'
         run: |
-          echo "Checking branch protection for main..."
+          echo "🚨 Enabling Code Freeze..."
 
           RESPONSE=$(curl -s \
             -o /tmp/ruleset.json \
@@ -55,19 +55,22 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.CODE_FREEZE_PAT }}" \
             -H "X-GitHub-Api-Version: 2026-03-10" \
-            "https://api.github.com/repos/${{ github.repository }}/rulesets") \
+            "https://api.github.com/repos/${{ github.repository }}/rulesets" \
             -d '{
               "name": "Code Freeze Protection",
-              "type": "branch",
+              "target": "branch",
               "enforcement": "active",
               "conditions": {
                 "ref_name": {
-                  "includes": ["refs/heads/ main"]},
-                  "excludes": []
+                  "include": [
+                    "refs/heads/main"
+                  ],
+                  "exclude": []
+                }
               },
               "rules": [
                 {
-                "type": "update"
+                  "type": "update"
                 }
               ]
             }')
