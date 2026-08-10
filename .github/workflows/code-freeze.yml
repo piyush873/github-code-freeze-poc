@@ -49,7 +49,7 @@ jobs:
             -w "%{http_code}" \
             -L \
             -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Authorization: Bearer ${{ secrets.CODE_FREEZE_PAT }}" \
             -H "X-GitHub-Api-Version: 2026-03-10" \
             "https://api.github.com/repos/${{ github.repository }}/branches/main/protection")
 
