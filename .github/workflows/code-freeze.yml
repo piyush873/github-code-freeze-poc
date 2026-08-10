@@ -1,0 +1,37 @@
+name: Code Freeze POC
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "0 6 * * *"
+
+jobs:
+  code-freeze-check:
+    runs-on: ubuntu-latest
+
+    env:
+      RELEASE_DATE: "2026-09-30"
+      FREEZE_DAYS: 21
+
+    steps:
+      - name: Check Code Freeze
+        run: |
+          echo "Release Date: $RELEASE_DATE"
+          echo "Freeze Period: $FREEZE_DAYS days"
+
+          RELEASE_TS=$(date -d "$RELEASE_DATE" +%s)
+          TODAY_TS=$(date -u +%s)
+
+          FREEZE_TS=$((RELEASE_TS - FREEZE_DAYS * 86400))
+
+          FREEZE_DATE=$(date -u -d "@$FREEZE_TS" "+%Y-%m-%d")
+
+          echo "Today's Date: $(date -u "+%Y-%m-%d")"
+          echo "Calculated Freeze Date: $FREEZE_DATE"
+
+          if [ "$(date -u "+%Y-%m-%d")" = "$FREEZE_DATE" ]; then
+            echo "🚨 CODE FREEZE SHOULD START TODAY"
+          else
+            echo "✅ Code Freeze is not required today"
+          fi
