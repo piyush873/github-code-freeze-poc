@@ -24,6 +24,10 @@ jobs:
       FREEZE_DAYS: 21
 
     steps:
+
+      # ==========================================================
+      # 1. Check whether we are inside the Code Freeze period
+      # ==========================================================
       - name: Check Code Freeze
         id: freeze-check
         run: |
@@ -39,16 +43,32 @@ jobs:
           echo "Today's Date: $TODAY"
           echo "Calculated Freeze Date: $FREEZE_DATE"
 
-          if [ "$TODAY" = "$FREEZE_DATE" ]; then
-            echo "🚨 CODE FREEZE SHOULD START TODAY"
+          if [[ "$TODAY" > "$FREEZE_DATE" || "$TODAY" == "$FREEZE_DATE" ]] && \
+             [[ "$TODAY" < "$RELEASE_DATE" ]]; then
+
+            echo "🚨 CODE FREEZE IS ACTIVE"
             echo "freeze=true" >> "$GITHUB_OUTPUT"
             echo "Freeze output: true"
+
           else
-            echo "✅ Code Freeze is not required today"
+
+            echo "✅ Code Freeze is not active today"
             echo "freeze=false" >> "$GITHUB_OUTPUT"
             echo "Freeze output: false"
+
           fi
 
+
+      # ==========================================================
+      # 2. Check whether release is completed
+      #
+      # Manual workflow:
+      #   release_completed = true
+      #       -> simulate release completion
+      #
+      # Scheduled workflow:
+      #   Uses RELEASE_DATE automatically
+      # ==========================================================
       - name: Check Release Completion
         id: release-check
         run: |
@@ -57,19 +77,32 @@ jobs:
           echo "Today's Date: $TODAY"
           echo "Release Date: $RELEASE_DATE"
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.release_completed }}" = "true" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ "${{ inputs.release_completed }}" = "true" ]; then
+
             echo "🧪 Manual test: Release completion simulated."
             echo "release_completed=true" >> "$GITHUB_OUTPUT"
 
           elif [[ "$TODAY" > "$RELEASE_DATE" || "$TODAY" == "$RELEASE_DATE" ]]; then
+
             echo "🚀 Release date has been reached."
             echo "release_completed=true" >> "$GITHUB_OUTPUT"
 
           else
+
             echo "⏳ Release is not completed yet."
             echo "release_completed=false" >> "$GITHUB_OUTPUT"
+
           fi
 
+
+      # ==========================================================
+      # 3. Find existing Code Freeze ruleset
+      #
+      # This always runs so that:
+      #   - Freeze can check if ruleset already exists
+      #   - Unfreeze can find the ruleset dynamically
+      # ==========================================================
       - name: Find Code Freeze Ruleset
         id: find-freeze
         run: |
@@ -83,17 +116,6 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.CODE_FREEZE_PAT }}" \
             -H "X-GitHub-Api-Version: 2026-03-10" \
             "https://api.github.com/repos/${{ github.repository }}/rulesets")
-          
-
-          RESPONSE_1=$(curl -s -o /tmp/user.json -w "%{http_code}" -L \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.CODE_FREEZE_PAT }}" \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "https://api.github.com/users/piyush873")
-          
-          echo "HTTP Status: $RESPONSE_1"
-          cat /tmp/user.json
-
 
           echo "HTTP Status: $RESPONSE"
 
@@ -103,58 +125,37 @@ jobs:
             exit 1
           fi
 
-          RULESET_ID=$(jq -r '.[] | select(.name == "Code Freeze Protection") | .id' /tmp/rulesets.json | head -n 1)
+          RULESET_ID=$(jq -r \
+            '.[] | select(.name == "Code Freeze Protection") | .id' \
+            /tmp/rulesets.json | head -n 1)
 
           if [ -n "$RULESET_ID" ]; then
+
             echo "🔒 Code Freeze Protection found."
             echo "Ruleset ID: $RULESET_ID"
 
             echo "ruleset_found=true" >> "$GITHUB_OUTPUT"
             echo "ruleset_id=$RULESET_ID" >> "$GITHUB_OUTPUT"
+
           else
+
             echo "ℹ️ No Code Freeze Protection ruleset found."
             echo "ruleset_found=false" >> "$GITHUB_OUTPUT"
+
           fi
 
-      - name: Check Existing Code Freeze
-        id: existing-freeze
-        if: steps.freeze-check.outputs.freeze == 'true'
-        run: |
-          echo "Checking for existing Code Freeze Protection ruleset..."
 
-          RESPONSE=$(curl -s \
-            -o /tmp/rulesets.json \
-            -w "%{http_code}" \
-            -L \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.CODE_FREEZE_PAT }}" \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "https://api.github.com/repos/${{ github.repository }}/rulesets")
-
-          echo "HTTP Status: $RESPONSE"
-
-          if [ "$RESPONSE" != "200" ]; then
-            echo "❌ Failed to retrieve repository rulesets."
-            cat /tmp/rulesets.json
-            exit 1
-          fi
-
-          RULESET_ID=$(jq -r '.[] | select(.name == "Code Freeze Protection") | .id' /tmp/rulesets.json | head -n 1)
-
-          if [ -n "$RULESET_ID" ]; then
-            echo "🔒 Code Freeze Protection already exists."
-            echo "Ruleset ID: $RULESET_ID"
-
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "ruleset_id=$RULESET_ID" >> "$GITHUB_OUTPUT"
-          else
-            echo "No existing Code Freeze Protection ruleset found."
-
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
+      # ==========================================================
+      # 4. Enable Code Freeze
+      #
+      # Only creates the ruleset if:
+      #   - We are inside freeze period
+      #   - Ruleset does not already exist
+      #
+      # Release Manager / User is configured as bypass actor.
+      # ==========================================================
       - name: Enable Code Freeze
-        if: steps.freeze-check.outputs.freeze == 'true' && steps.existing-freeze.outputs.exists == 'false'
+        if: steps.freeze-check.outputs.freeze == 'true' && steps.find-freeze.outputs.ruleset_found == 'false'
         run: |
           echo "🚨 Enabling Code Freeze..."
 
@@ -171,6 +172,15 @@ jobs:
               "name": "Code Freeze Protection",
               "target": "branch",
               "enforcement": "active",
+
+              "bypass_actors": [
+                {
+                  "actor_id": 278897320,
+                  "actor_type": "User",
+                  "bypass_mode": "pull_request"
+                }
+              ],
+
               "conditions": {
                 "ref_name": {
                   "include": [
@@ -179,6 +189,7 @@ jobs:
                   "exclude": []
                 }
               },
+
               "rules": [
                 {
                   "type": "update"
@@ -191,11 +202,22 @@ jobs:
 
           if [ "$RESPONSE" = "201" ]; then
             echo "✅ Code Freeze Ruleset created successfully."
+            echo "🔒 Repository is now under Code Freeze."
           else
             echo "❌ Failed to create Code Freeze Ruleset."
             exit 1
           fi
 
+
+      # ==========================================================
+      # 5. Disable Code Freeze
+      #
+      # Runs only when:
+      #   - Release is completed
+      #   - Code Freeze ruleset exists
+      #
+      # Ruleset ID is discovered dynamically.
+      # ==========================================================
       - name: Disable Code Freeze
         if: steps.release-check.outputs.release_completed == 'true' && steps.find-freeze.outputs.ruleset_found == 'true'
         run: |
@@ -217,10 +239,14 @@ jobs:
           echo "HTTP Status: $RESPONSE"
 
           if [ "$RESPONSE" = "204" ]; then
+
             echo "✅ Code Freeze Ruleset deleted successfully."
             echo "🔓 Repository returned to normal development."
+
           else
+
             echo "❌ Failed to delete Code Freeze Ruleset."
             cat /tmp/delete-ruleset.json
             exit 1
+
           fi
