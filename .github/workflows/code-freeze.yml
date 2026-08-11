@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   code-freeze-check:
@@ -26,7 +27,7 @@ jobs:
     steps:
 
       # ==========================================================
-      # 1. Check whether we are inside the Code Freeze period
+      # 1. Check whether today is inside the Code Freeze period
       # ==========================================================
       - name: Check Code Freeze
         id: freeze-check
@@ -43,6 +44,10 @@ jobs:
           echo "Today's Date: $TODAY"
           echo "Calculated Freeze Date: $FREEZE_DATE"
 
+          # Make Freeze Date available to later steps
+          echo "freeze_date=$FREEZE_DATE" >> "$GITHUB_OUTPUT"
+
+          # Freeze is active from Freeze Date until Release Date
           if [[ "$TODAY" > "$FREEZE_DATE" || "$TODAY" == "$FREEZE_DATE" ]] && \
              [[ "$TODAY" < "$RELEASE_DATE" ]]; then
 
@@ -60,14 +65,14 @@ jobs:
 
 
       # ==========================================================
-      # 2. Check whether release is completed
-      #
-      # Manual workflow:
-      #   release_completed = true
-      #       -> simulate release completion
+      # 2. Check whether the release is completed
       #
       # Scheduled workflow:
-      #   Uses RELEASE_DATE automatically
+      #   Uses RELEASE_DATE automatically.
+      #
+      # Manual workflow:
+      #   release_completed=true can be used to simulate
+      #   release completion for POC testing.
       # ==========================================================
       - name: Check Release Completion
         id: release-check
@@ -99,9 +104,12 @@ jobs:
       # ==========================================================
       # 3. Find existing Code Freeze ruleset
       #
-      # This always runs so that:
-      #   - Freeze can check if ruleset already exists
-      #   - Unfreeze can find the ruleset dynamically
+      # This runs every time so that:
+      #
+      #   - Freeze logic can check whether ruleset exists
+      #   - Unfreeze logic can find the ruleset dynamically
+      #
+      # No ruleset ID is hardcoded.
       # ==========================================================
       - name: Find Code Freeze Ruleset
         id: find-freeze
@@ -140,6 +148,7 @@ jobs:
           else
 
             echo "ℹ️ No Code Freeze Protection ruleset found."
+
             echo "ruleset_found=false" >> "$GITHUB_OUTPUT"
 
           fi
@@ -148,11 +157,14 @@ jobs:
       # ==========================================================
       # 4. Enable Code Freeze
       #
-      # Only creates the ruleset if:
-      #   - We are inside freeze period
+      # Create the ruleset only when:
+      #
+      #   - Freeze period is active
       #   - Ruleset does not already exist
       #
-      # Release Manager / User is configured as bypass actor.
+      # Release Manager:
+      #   User ID 278897320
+      #   PR-only bypass
       # ==========================================================
       - name: Enable Code Freeze
         if: steps.freeze-check.outputs.freeze == 'true' && steps.find-freeze.outputs.ruleset_found == 'false'
@@ -201,11 +213,81 @@ jobs:
           cat /tmp/ruleset.json
 
           if [ "$RESPONSE" = "201" ]; then
+
             echo "✅ Code Freeze Ruleset created successfully."
             echo "🔒 Repository is now under Code Freeze."
+
+            # ==================================================
+            # 4A. Create Code Freeze Notification
+            # ==================================================
+
+            echo "📢 Creating Code Freeze notification..."
+
+            FREEZE_DATE="${{ steps.freeze-check.outputs.freeze_date }}"
+
+            ISSUE_BODY=$(cat <<EOF
+          ## 🚨 Code Freeze Started
+
+          **Repository:** ${{ github.repository }}
+
+          **Branch:** main
+
+          **Release Date:** $RELEASE_DATE
+
+          **Freeze Period:** $FREEZE_DAYS days
+
+          **Freeze Date:** $FREEZE_DATE
+
+          ---
+
+          Code Freeze has been automatically enabled by GitHub Actions.
+
+          ### During Code Freeze
+
+          - Direct updates to \`main\` are blocked.
+          - Developers should use Pull Requests.
+          - Authorized Release Managers can use the configured PR bypass.
+
+          **Workflow:** ${{ github.workflow }}
+
+          **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          )
+
+            ISSUE_PAYLOAD=$(jq -n \
+              --arg title "🚨 Code Freeze Started" \
+              --arg body "$ISSUE_BODY" \
+              '{
+                title: $title,
+                body: $body
+              }')
+
+            ISSUE_RESPONSE=$(curl -s \
+              -o /tmp/freeze-issue.json \
+              -w "%{http_code}" \
+              -L \
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.CODE_FREEZE_PAT }}" \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "https://api.github.com/repos/${{ github.repository }}/issues" \
+              -d "$ISSUE_PAYLOAD")
+
+            echo "Notification HTTP Status: $ISSUE_RESPONSE"
+            cat /tmp/freeze-issue.json
+
+            if [ "$ISSUE_RESPONSE" = "201" ]; then
+              echo "✅ Code Freeze notification created successfully."
+            else
+              echo "⚠️ Failed to create Code Freeze notification."
+              echo "Code Freeze itself was successfully enabled."
+            fi
+
           else
+
             echo "❌ Failed to create Code Freeze Ruleset."
             exit 1
+
           fi
 
 
@@ -213,6 +295,7 @@ jobs:
       # 5. Disable Code Freeze
       #
       # Runs only when:
+      #
       #   - Release is completed
       #   - Code Freeze ruleset exists
       #
@@ -242,6 +325,62 @@ jobs:
 
             echo "✅ Code Freeze Ruleset deleted successfully."
             echo "🔓 Repository returned to normal development."
+
+            # ==================================================
+            # 5A. Create Code Freeze End Notification
+            # ==================================================
+
+            echo "📢 Creating Code Freeze end notification..."
+
+            ISSUE_BODY=$(cat <<EOF
+          ## 🔓 Code Freeze Ended
+
+          **Repository:** ${{ github.repository }}
+
+          **Branch:** main
+
+          **Release Date:** $RELEASE_DATE
+
+          ---
+
+          The Code Freeze ruleset has been automatically removed.
+
+          The repository has returned to normal development.
+
+          **Workflow:** ${{ github.workflow }}
+
+          **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          )
+
+            ISSUE_PAYLOAD=$(jq -n \
+              --arg title "🔓 Code Freeze Ended" \
+              --arg body "$ISSUE_BODY" \
+              '{
+                title: $title,
+                body: $body
+              }')
+
+            ISSUE_RESPONSE=$(curl -s \
+              -o /tmp/unfreeze-issue.json \
+              -w "%{http_code}" \
+              -L \
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.CODE_FREEZE_PAT }}" \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "https://api.github.com/repos/${{ github.repository }}/issues" \
+              -d "$ISSUE_PAYLOAD")
+
+            echo "Notification HTTP Status: $ISSUE_RESPONSE"
+            cat /tmp/unfreeze-issue.json
+
+            if [ "$ISSUE_RESPONSE" = "201" ]; then
+              echo "✅ Code Freeze end notification created successfully."
+            else
+              echo "⚠️ Failed to create Code Freeze end notification."
+              echo "Code Freeze itself was successfully removed."
+            fi
 
           else
 
