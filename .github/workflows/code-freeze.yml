@@ -84,6 +84,17 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.CODE_FREEZE_PAT }}" \
             -H "X-GitHub-Api-Version: 2026-03-10" \
             "https://api.github.com/repos/${{ github.repository }}/rulesets")
+          
+
+          RESPONSE_1=$(curl -s -o /tmp/user.json -w "%{http_code}" -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.CODE_FREEZE_PAT }}" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/users/piyush873")
+          
+          echo "HTTP Status: $RESPONSE_1"
+          cat /tmp/user.json
+          
 
           echo "HTTP Status: $RESPONSE"
 
