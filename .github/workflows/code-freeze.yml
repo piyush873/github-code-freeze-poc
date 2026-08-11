@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      RELEASE_DATE: "2026-09-30"
+      RELEASE_DATE: "2026-08-31"
       FREEZE_DAYS: 21
 
     steps:
@@ -72,7 +72,6 @@ jobs:
 
       - name: Find Code Freeze Ruleset
         id: find-freeze
-        if: steps.release-check.outputs.release_completed == 'true'
         run: |
           echo "🔍 Searching for Code Freeze Protection ruleset..."
 
@@ -198,7 +197,7 @@ jobs:
           fi
 
       - name: Disable Code Freeze
-        if: steps.find-freeze.outputs.ruleset_found == 'true'
+        if: steps.release-check.outputs.release_completed == 'true' && steps.find-freeze.outputs.ruleset_found == 'true'
         run: |
           RULESET_ID="${{ steps.find-freeze.outputs.ruleset_id }}"
 
